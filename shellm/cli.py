@@ -153,6 +153,9 @@ def cmd_tasks(a):
 def cmd_info(a):
     from .io import load_state
 
+    from .io import resolve_ckpt
+
+    a.ckpt = resolve_ckpt(a.ckpt)
     sd, cfg = load_state(a.ckpt)
     n = sum(v.numel() for v in sd.values())
     print(json.dumps(cfg.to_dict(), indent=2))
@@ -266,8 +269,8 @@ def main(argv=None):
     s.add_argument("--model", help="base model (default: the bundled one)")
     s.add_argument("--skill", help="eval: skill adapter to add (e.g. skills/pc); omit to grade the model as is")
     s.add_argument("--out", default="runs/pc-skill")
-    s.add_argument("--steps", type=int, default=900)
-    s.add_argument("--lora-r", dest="lora_r", type=int, default=32)
+    s.add_argument("--steps", type=int, default=1300)
+    s.add_argument("--lora-r", dest="lora_r", type=int, default=0, help="0 = train all weights (default); >0 = small adapter")
     s.add_argument("-n", type=int, default=160, help="eval: tasks per split")
     s.add_argument("-v", "--verbose", action="store_true", help="eval: print every failure")
     s.set_defaults(fn=cmd_tasks)
@@ -282,7 +285,7 @@ def main(argv=None):
     s.set_defaults(fn=cmd_serve)
 
     s = sub.add_parser("info", help="describe a checkpoint")
-    s.add_argument("ckpt")
+    s.add_argument("ckpt", nargs="?", help="checkpoint folder or name (default: the bundled model)")
     s.set_defaults(fn=cmd_info)
 
     argv = list(sys.argv[1:] if argv is None else argv)

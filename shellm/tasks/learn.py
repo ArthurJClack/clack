@@ -76,8 +76,11 @@ def evaluate(session, n: int = 160, seed: int = 123, splits=SPLITS, verbose: boo
     return res
 
 
-def train_skill(base: str, out: str, steps: int = 900, lora_r: int = 32, n_train: int = 24_000, lr: float = 2e-3,
+def train_skill(base: str, out: str, steps: int = 1300, lora_r: int = 0, n_train: int = 40_000, lr: float | None = None,
                 batch_size: int = 32, seq_len: int = 128, seed: int = 0) -> Path:
+    """lora_r=0 trains every weight (best at learning to copy names it has never seen);
+    lora_r>0 trains a small adapter instead (a few mb, but it mostly memorizes)."""
+    lr = lr or (2e-3 if lora_r else 6e-4)
     from ..io import load_tokenizer
     from ..train import TrainArgs, train
 

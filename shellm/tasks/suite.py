@@ -3,7 +3,7 @@ already exists in the workspace) and a reference program (what should be done).
 
 three ways to draw tasks, to see what the model really learned:
   "train"        the phrasings and names used for training
-  "new_names"    same phrasings, file/folder names never seen in training
+  "new_names"    same phrasings, file/folder names built from words never seen in training
   "new_wording"  phrasings never seen in training
 """
 from __future__ import annotations
@@ -15,13 +15,44 @@ NAMES_TRAIN = """reports notes photos music drafts backup archive projects lette
 school work games logs data scripts todo ideas journal poems songs maps receipts taxes books movies stories tests
 results summary memo schedule agenda contacts links quotes garden house health pets family friends winter summer
 spring autumn monday friday alpha beta gamma delta red blue green old new final copy main temp home office shop
-paper river stone cloud""".split()
+paper river stone cloud apple bridge candle doctor engine forest guitar hammer island jacket kitchen ladder market
+needle orange pencil quarter rabbit silver ticket uncle valley window yellow zebra anchor basket camera dinner
+eagle farmer glass harbor insect jungle kettle lemon mirror number ocean planet queen rocket saddle table violin
+wagon badge circle dragon effort flower grape horse image jewel knife lunch metal north onion piano quiz robot
+snake tiger union voice whale beach chair dance earth field giant honey index joker koala light mouse night olive
+pearl radio sugar train water bread clock dream fruit green heart jelly lemon magic nurse party round storm tower""".split()
 NAMES_HELD = """essays sketches charts ledger diary recordings homework trips cooking fitness wishlist chores library
-studio orders tickets harvest lantern meadow voyage""".split()
+studio orders tickets harvest lantern meadow voyage pocket blanket thunder compass feather walnut""".split()
 EXTS = ["txt", "md", "log", "csv"]
 WORDS = """hello world buy milk call mom the meeting is at noon remember to water plants pay rent on friday good
 morning all done for today first second third draft ready soon keep this safe do not forget bread eggs tea red
-blue green one two three four big small open closed yes no maybe later now see you tomorrow thank very much""".split()
+blue green one two three four big small open closed yes no maybe later now see you tomorrow thank very much
+check email fix bike clean room read book walk dog send letter find keys start early finish late more less
+happy quiet busy free cold warm new old next last week month year time list plan idea note item thing""".split()
+_CONS, _VOW = "bdfgklmnprstvz", "aeiou"
+
+
+def _pseudo(rng: random.Random) -> str:
+    """a made-up word. nobody can memorize these, so using one correctly means really copying it."""
+    return "".join(rng.choice(_CONS) + rng.choice(_VOW) for _ in range(rng.randint(2, 3))) + rng.choice(["", "", "n", "r", "s"])
+
+
+def _name(rng: random.Random, pool: list[str]) -> str:
+    r = rng.random()
+    if r < 0.4:
+        return rng.choice(pool)
+    if r < 0.65:
+        return _pseudo(rng)
+    if r < 0.8:
+        return rng.choice(pool) + rng.choice(["_", "-", ""]) + rng.choice(pool + [_pseudo(rng)])
+    return rng.choice(pool) + str(rng.choice([rng.randint(1, 9), rng.randint(10, 99), rng.randint(2019, 2026)]))
+
+
+def _text(rng: random.Random) -> str:
+    words = rng.sample(WORDS, rng.randint(2, 4))
+    if rng.random() < 0.3:  # sometimes a made-up word or a number, so text has to be copied too
+        words[rng.randrange(len(words))] = _pseudo(rng) if rng.random() < 0.6 else str(rng.randint(1, 500))
+    return " ".join(words)
 
 
 @dataclass
@@ -127,11 +158,15 @@ FAMILIES = {
 
 
 def _slots(rng: random.Random, names: list[str]) -> dict:
-    a, b, c, d = rng.sample(names, 4)
+    picked: list[str] = []
+    while len(picked) < 4:  # four different names
+        n = _name(rng, names)
+        if n not in picked:
+            picked.append(n)
+    a, b, c, d = picked
     ext = rng.choice(EXTS)
-    words = lambda: " ".join(rng.sample(WORDS, rng.randint(2, 4)))
     return {"d": a, "d2": b, "f": f"{c}.{ext}", "g": f"{d}.{rng.choice(EXTS) if rng.random() < 0.3 else ext}",
-            "ext": ext, "t": words(), "t0": words()}
+            "ext": ext, "t": _text(rng), "t0": _text(rng)}
 
 
 def make_task(rng: random.Random, family: str, split: str = "train") -> Task:
@@ -141,7 +176,10 @@ def make_task(rng: random.Random, family: str, split: str = "train") -> Task:
     setup = [x.format(**s) for x in fam["setup"]]
     if fam["extra"] == "lines":  # give the file a random number of lines to count
         setup += [f"append {s['f']} {' '.join(rng.sample(WORDS, 2))}" for _ in range(rng.randint(0, 5))]
-    return Task(family, template.format(**s), [x.format(**s) for x in fam["program"]], setup)
+    instruction = template.format(**s)
+    if split == "train" and rng.random() < 0.2:  # a little politeness noise so wording is less brittle
+        instruction = rng.choice(["please " + instruction, instruction + " please", "can you " + instruction, "ok " + instruction])
+    return Task(family, instruction, [x.format(**s) for x in fam["program"]], setup)
 
 
 def make_tasks(n: int, seed: int = 0, split: str = "train", families: list[str] | None = None) -> list[Task]:
