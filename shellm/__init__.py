@@ -3,4 +3,4 @@ from .config import PRESETS, ModelConfig, preset
 from .model import Shellm
 
 __all__ = ["ModelConfig", "PRESETS", "preset", "Shellm"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

@@ -17,6 +17,30 @@ from .config import ModelConfig
 from .model import Shellm
 
 
+BUNDLED = Path(__file__).parent / "models"
+DEFAULT_MODEL = "shellm-nano"
+
+
+def model_dirs() -> list[Path]:
+    return [BUNDLED, Path.home() / ".shellm" / "models", Path("models")]
+
+
+def resolve_ckpt(name=None, marker: str = "config.json") -> Path:
+    """a path, or just a name like "shellm-nano" (looked up in the bundled models,
+    ~/.shellm/models and ./models). no name -> $SHELLM_MODEL, else the bundled default."""
+    import os
+
+    name = name or os.environ.get("SHELLM_MODEL") or DEFAULT_MODEL
+    p = Path(name).expanduser()
+    if (p / marker).exists():
+        return p
+    for base in model_dirs():
+        if (base / str(name) / marker).exists():
+            return base / str(name)
+    have = sorted({d.name for b in model_dirs() if b.is_dir() for d in b.iterdir() if (d / marker).exists()})
+    raise FileNotFoundError(f"no model at {name!r}. models found by name: {have or 'none'}")
+
+
 def clean_state(sd: dict, cfg: ModelConfig) -> dict:
     out = {k: v.detach().contiguous() for k, v in sd.items()}
     if cfg.tie_embeddings:
@@ -44,7 +68,7 @@ def save_checkpoint(out_dir, state: dict, cfg: ModelConfig, tokenizer_path, info
 def load_state(ckpt_dir) -> tuple[dict, ModelConfig]:
     from safetensors.torch import load_file
 
-    d = Path(ckpt_dir)
+    d = resolve_ckpt(ckpt_dir)
     cfg = ModelConfig.load(d / "config.json")
     sd = load_file(str(d / "model.safetensors"))
     return {k: v.float() for k, v in sd.items()}, cfg
@@ -63,7 +87,7 @@ def load_model(ckpt_dir, device: str = "cpu") -> tuple[Shellm, ModelConfig]:
 def load_tokenizer(ckpt_dir):
     from .tokenizer import Tokenizer
 
-    return Tokenizer(Path(ckpt_dir) / "tokenizer.json")
+    return Tokenizer(resolve_ckpt(ckpt_dir) / "tokenizer.json")
 
 
 def pick_device(name: str = "auto") -> str:

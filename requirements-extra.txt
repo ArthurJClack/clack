@@ -1,0 +1,10 @@
+-r requirements.txt
+# only for `shellm export` (gguf / onnx)
+gguf>=0.10
+onnx>=1.16
+onnxscript>=0.1
+# only for `shellm export --verify` and the test suite
+onnxruntime>=1.18
+transformers>=4.45
+llama-cpp-python>=0.3
+pytest

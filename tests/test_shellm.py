@@ -230,3 +230,71 @@ def test_http_server_openai_api_and_live_events(tiny):
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+# ---------------------------------------------------------------- pc tasks + terminal app
+def test_workspace_cannot_leave_its_folder(tmp_path):
+    import os
+
+    from shellm.tasks import Workspace
+
+    ws = Workspace(tmp_path / "ws")
+    (tmp_path / "secret.txt").write_text("keep out")
+    assert [e["ok"] for e in ws.run_program(["mkdir a", "write a/x.txt hello there", "append a/x.txt more", "copy a/x.txt b.txt", "move b.txt c.txt"])] == [True] * 5
+    assert ws.run("read a/x.txt") == "hello there\nmore\n" and ws.run("count a/x.txt") == "2"
+    assert ws.run("list") == "a/\nc.txt" and ws.run("find *.txt") == "a/x.txt\nc.txt"
+    os.symlink(tmp_path, tmp_path / "ws" / "up")
+    for bad in ["read ../secret.txt", "write ../evil.txt x", "write /tmp/evil.txt x", "delete .", "delete ..", "copy c.txt ../out.txt",
+                "write C:\\evil.txt x", "mkdir a/../../b", "read up/secret.txt", "find ../*", "rm -rf /", "write a x"]:
+        assert not ws.run_program([bad])[0]["ok"], bad
+    assert (tmp_path / "secret.txt").read_text() == "keep out" and sorted(p.name for p in tmp_path.iterdir()) == ["secret.txt", "ws"]
+    assert ws.run_program(["read nope.txt", "mkdir never"])[-1]["ok"] is False and not (tmp_path / "ws" / "never").exists()  # stops at first failure
+
+
+def test_task_suite_references_pass_and_grading_is_strict():
+    from shellm.tasks import FAMILIES, make_tasks, parse_program
+    from shellm.tasks.learn import grade
+
+    for split in ("train", "new_names", "new_wording"):
+        tasks = make_tasks(3 * len(FAMILIES), 5, split)
+        assert {t.family for t in tasks} == set(FAMILIES)
+        for t in tasks:
+            assert grade(t, t.program), t  # every reference program really does the job
+            assert not grade(t, []) and not grade(t, ["mkdir zzz-wrong"]), t
+            assert parse_program(">" + t.text().split("\n>", 1)[1]) == t.program
+    held = {w for f in FAMILIES.values() for w in f["held"]}
+    assert not held & {w for f in FAMILIES.values() for w in f["train"]}  # held-out wordings never appear in training
+
+
+def test_terminal_app_commands_and_permission_prompt(tiny, tmp_path, monkeypatch):
+    import io
+
+    from shellm.api import Session
+    from shellm.tasks import learn
+    from shellm.tui import App
+
+    def run(lines, **kw):
+        out, it = io.StringIO(), iter(lines)
+
+        def read(prompt):
+            try:
+                return next(it)
+            except StopIteration:
+                raise EOFError from None  # out of script = the user pressed ctrl+d
+
+        app = App(str(tiny["ckpt"]), workspace=tmp_path / "ws", read=read, out=out, color=False, **kw)
+        app.pc = Session(tiny["ckpt"])  # stand-in for the skill model; the plan itself is faked below
+        app.run()
+        return app, out.getvalue()
+
+    monkeypatch.setattr(learn, "propose", lambda session, instruction, **kw: ["mkdir notes", "write notes/a.txt hi"])
+    app, text = run(["/tokens 5", "/seed 1", "the cat sat", "", "/tokens nope", "/nope", "/state",
+                     "/do make notes", "n", "/do make notes", "y", "/exit"])
+    assert "writing up to 5 tokens" in text and "5 tokens" in text and "usage: /tokens" in text and "no command /nope" in text
+    assert "nothing changed" in text and text.count("run this?") == 0  # the prompt text goes through read(), not out
+    assert "not run" in text and (tmp_path / "ws" / "notes" / "a.txt").read_text() == "hi\n"
+    assert text.rstrip().endswith("bye")
+
+    app, text = run(["/fact the cat sat on a => dog", "/steer the cat | a dog x0.5", "/state", "/reset", "/state"])  # runs out of input = ctrl+d
+    assert "written into layer" in text and "fact   the cat sat on a" in text and "steer  layer" in text
+    assert text.count("nothing changed") == 1 and app.session.state()["changed"] == []

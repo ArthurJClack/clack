@@ -1,12 +1,17 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "shellm"
-version = "0.1.0"
+version = "0.2.0"
 description = "a tiny llama-compatible llm you own end to end, plus weight-space programming"
 requires-python = ">=3.10"
-dependencies = ["torch>=2.4", "numpy>=1.26", "tokenizers>=0.19", "safetensors>=0.4", "gguf>=0.10", "onnx>=1.16", "onnxscript>=0.1"]
+dependencies = ["torch>=2.4", "numpy>=1.26", "tokenizers>=0.19", "safetensors>=0.4"]
 
 [project.optional-dependencies]
-verify = ["onnxruntime>=1.18", "transformers>=4.45", "llama-cpp-python>=0.3", "pytest"]
+export = ["gguf>=0.10", "onnx>=1.16", "onnxscript>=0.1"]
+verify = ["gguf>=0.10", "onnx>=1.16", "onnxscript>=0.1", "onnxruntime>=1.18", "transformers>=4.45", "llama-cpp-python>=0.3", "pytest"]
 
 [project.scripts]
 shellm = "shellm.cli:main"
@@ -15,7 +20,7 @@ shellm = "shellm.cli:main"
 include = ["shellm*"]
 
 [tool.setuptools.package-data]
-shellm = ["viz/static/*", "viz/static/vendor/*"]
+shellm = ["viz/static/*", "viz/static/vendor/*", "models/*/*", "models/*/*/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

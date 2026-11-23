@@ -108,6 +108,48 @@ def cmd_serve(a):
     serve(a.ckpt, a.host, a.port, a.device, a.data, a.cors)
 
 
+def cmd_chat(a):
+    from .tui import main as tui_main
+
+    tui_main(a.model, a.workspace, a.device, a.print, a.max_tokens)
+
+
+def cmd_do(a):
+    from .api import Session
+    from .tasks import Workspace
+    from .tasks.learn import propose
+
+    plan = propose(Session.with_skill(a.skill, base=a.model), a.instruction)
+    if not plan:
+        raise SystemExit("the model did not produce a plan for that")
+    print("\n".join(f"> {line}" for line in plan))
+    if not a.yes:
+        if input(f"run this in {a.workspace}? [y/N] ").strip().lower() not in ("y", "yes"):
+            return
+    for e in Workspace(a.workspace).run_program(plan):
+        print(("ok  " if e["ok"] else "FAIL") + " " + e["action"] + (f"\n{e['output']}" if e["output"] else ""))
+
+
+def cmd_tasks(a):
+    from .tasks import FAMILIES, make_tasks
+    from .tasks import learn
+
+    if a.what == "list":
+        for name, fam in FAMILIES.items():
+            t = make_tasks(1, 0, "train", [name])[0]
+            print(f"{name:18s} {t.instruction!r:70s} -> {' ; '.join(t.program)}")
+    elif a.what == "train":
+        final = learn.train_skill(a.model or "shellm-nano", a.out, steps=a.steps, lora_r=a.lora_r)
+        print(f"skill adapter: {a.out}/adapter-last   merged model: {final}")
+    elif a.what == "eval":
+        from .api import Session
+
+        s = Session.with_skill(a.skill, base=a.model) if a.skill else Session(a.model)
+        for split, r in learn.evaluate(s, n=a.n, verbose=a.verbose).items():
+            print(f"{split:12s} {r['pass_rate']*100:5.1f}% of {r['n']} tasks   worst: "
+                  + ", ".join(f"{f} {v*100:.0f}%" for f, v in sorted(r["by_family"].items(), key=lambda kv: kv[1])[:3]))
+
+
 def cmd_info(a):
     from .io import load_state
 
@@ -122,7 +164,8 @@ def cmd_info(a):
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog="shellm", description="your own tiny llm + weight-space programming")
+    p = argparse.ArgumentParser(prog="shellm", description="your own tiny llm + weight-space programming. "
+                                "run with no arguments for the terminal app.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     s = sub.add_parser("tokenizer", help="train a byte-level bpe tokenizer")
@@ -202,8 +245,35 @@ def main(argv=None):
     s.add_argument("args", nargs=argparse.REMAINDER)
     s.set_defaults(fn=cmd_wsp)
 
+    s = sub.add_parser("chat", help="the terminal app (this is what plain `shellm` opens)")
+    s.add_argument("model", nargs="?", help="checkpoint folder or name (default: the bundled model)")
+    s.add_argument("--workspace", help="folder that /do may touch (default: ~/shellm-workspace)")
+    s.add_argument("--device", default="auto")
+    s.add_argument("-p", "--print", metavar="PROMPT", help="continue PROMPT once, print it and exit")
+    s.add_argument("--max-tokens", type=int, default=80)
+    s.set_defaults(fn=cmd_chat)
+
+    s = sub.add_parser("do", help="one pc task from the command line")
+    s.add_argument("instruction")
+    s.add_argument("--workspace", default=str(Path.home() / "shellm-workspace"))
+    s.add_argument("--model")
+    s.add_argument("--skill", default="skills/pc")
+    s.add_argument("-y", "--yes", action="store_true", help="run the plan without asking")
+    s.set_defaults(fn=cmd_do)
+
+    s = sub.add_parser("tasks", help="the pc task suite: list, train the skill, grade it")
+    s.add_argument("what", choices=["list", "train", "eval"])
+    s.add_argument("--model", help="base model (default: the bundled one)")
+    s.add_argument("--skill", help="eval: skill adapter to add (e.g. skills/pc); omit to grade the model as is")
+    s.add_argument("--out", default="runs/pc-skill")
+    s.add_argument("--steps", type=int, default=900)
+    s.add_argument("--lora-r", dest="lora_r", type=int, default=32)
+    s.add_argument("-n", type=int, default=160, help="eval: tasks per split")
+    s.add_argument("-v", "--verbose", action="store_true", help="eval: print every failure")
+    s.set_defaults(fn=cmd_tasks)
+
     s = sub.add_parser("serve", help="http api (openai-compatible) + live 3d viewer")
-    s.add_argument("ckpt")
+    s.add_argument("ckpt", nargs="?", help="checkpoint folder or name (default: the bundled model)")
     s.add_argument("--host", default="127.0.0.1")
     s.add_argument("--port", type=int, default=8000)
     s.add_argument("--device", default="auto")
@@ -215,6 +285,9 @@ def main(argv=None):
     s.add_argument("ckpt")
     s.set_defaults(fn=cmd_info)
 
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or (argv[0].startswith("-") and argv[0] not in ("-h", "--help")):
+        argv = ["chat", *argv]  # plain `shellm` (or `shellm -p "..."`) opens the terminal app
     a = p.parse_args(argv)
     a.fn(a)
 

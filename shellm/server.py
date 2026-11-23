@@ -384,9 +384,10 @@ def make_handler(session: Session, hub: Hub, cors: bool, loopback: bool):
     return Handler
 
 
-def make_server(ckpt, host: str = "127.0.0.1", port: int = 8000, device: str = "auto", data: str | None = None,
-                cors: bool = False) -> tuple[ThreadingHTTPServer, Session]:
-    session = Session(ckpt, device=device, data=data)
+def make_server(ckpt=None, host: str = "127.0.0.1", port: int = 8000, device: str = "auto", data: str | None = None,
+                cors: bool = False, session: Session | None = None) -> tuple[ThreadingHTTPServer, Session]:
+    """pass an existing `session` to put a server (and the viewer) on a model that is already in use."""
+    session = session or Session(ckpt, device=device, data=data)
     hub = Hub()
 
     def publish(ev):
@@ -394,6 +395,7 @@ def make_server(ckpt, host: str = "127.0.0.1", port: int = 8000, device: str = "
 
     publish.active = hub.active  # the session only pays for tracing while a viewer is connected
     session.subscribe(publish)
+    session.publish = publish  # other sessions can call .subscribe(this) to appear in the same viewer
     loopback = host in ("127.0.0.1", "localhost", "::1")
     httpd = ThreadingHTTPServer((host, port), make_handler(session, hub, cors, loopback))
     httpd.daemon_threads = True

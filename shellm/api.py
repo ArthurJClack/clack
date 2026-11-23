@@ -34,17 +34,30 @@ from .wsp.tensors import Weights
 
 
 class Session:
-    def __init__(self, ckpt, device: str = "auto", data: str | None = None):
-        self.ckpt = str(ckpt)
+    def __init__(self, ckpt=None, device: str = "auto", data: str | None = None, weights: Weights | None = None,
+                 name: str | None = None):
+        """ckpt: a checkpoint folder or a model name ("shellm-nano"; default: the bundled model).
+        weights: or hand over a Weights you built yourself (e.g. base + a skill)."""
+        from .io import resolve_ckpt
+
+        self.ckpt = str(name or "custom") if weights is not None else str(resolve_ckpt(ckpt))
         self.device = pick_device(device)
         self.data = data  # optional token-data dir: better key statistics for edits
         self.lock = threading.RLock()
         self.listeners: list[Callable[[dict], None]] = []
-        self._load()
+        self._load(weights)
+
+    @classmethod
+    def with_skill(cls, skill, base=None, strength: float = 1.0, **kw) -> "Session":
+        """base model + a skill (a lora adapter folder or name, e.g. "skills/pc"), added in weight space."""
+        from .io import resolve_ckpt
+
+        base_dir = resolve_ckpt(base)
+        return cls(weights=Weights.load(base_dir) + strength * Weights.load(skill), name=f"{base_dir.name}+{Path(str(skill)).name}", **kw)
 
     # ------------------------------------------------------------ lifecycle
-    def _load(self):
-        self.W = Weights.load(self.ckpt)
+    def _load(self, weights: Weights | None = None):
+        self.W = weights if weights is not None else Weights.load(self.ckpt)
         self.W0 = {k: v.clone() for k, v in self.W.items()}  # pristine copy, for reset() and diffs
         self.cfg = self.W.cfg
         self.tk = self.W.tok()

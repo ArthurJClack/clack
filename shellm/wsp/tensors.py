@@ -41,7 +41,14 @@ class Weights:
     # ------------------------------------------------------------ io
     @classmethod
     def load(cls, path) -> "Weights":
-        p = Path(path)
+        p = Path(path).expanduser()
+        if not p.exists():  # a bare name like "shellm-nano" or a bundled skill like "skills/pc"
+            from ..io import resolve_ckpt
+
+            try:
+                p = resolve_ckpt(path)
+            except FileNotFoundError:
+                p = resolve_ckpt(path, marker="adapter_config.json")
         if (p / "adapter_config.json").exists():  # peft lora adapter -> delta
             from ..lora import load_adapter_deltas
 

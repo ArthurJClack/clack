@@ -28,6 +28,11 @@ def export_npz(state: dict, cfg, tokenizer, out_path, dtype=np.float16) -> Path:
 
 
 def export_all(ckpt, out_dir, formats=FORMATS, name: str = "shellm", quants=("f16", "q8_0")) -> dict[str, Path]:
+    need = {"gguf": ["gguf"], "onnx": ["onnx", "onnxscript"]}
+    missing = sorted({m for f in formats for m in need.get(f, []) if __import__("importlib").util.find_spec(m) is None})
+    if missing:
+        raise SystemExit(f"exporting {', '.join(f for f in formats if f in need)} needs: pip install {' '.join(missing)}"
+                         "   (or: pip install -r requirements-extra.txt)")
     state, cfg = load_state(ckpt)
     tk = load_tokenizer(ckpt)
     info_p = Path(ckpt) / "info.json"
