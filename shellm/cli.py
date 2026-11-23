@@ -271,7 +271,7 @@ def main(argv=None):
     s.add_argument("--model", help="eval: the skill model to grade (default: shellm-nano-pc)")
     s.add_argument("--base", help="train: model to start from (default: shellm-nano)")
     s.add_argument("--out", default="runs/pc-skill")
-    s.add_argument("--steps", type=int, default=2000)
+    s.add_argument("--steps", type=int, default=2600)
     s.add_argument("--lora-r", dest="lora_r", type=int, default=0, help="0 = train all weights (default); >0 = small adapter")
     s.add_argument("--install", action="store_true", help="train: copy the result to ~/.shellm/models so /do uses it")
     s.add_argument("-n", type=int, default=160, help="eval: tasks per split")

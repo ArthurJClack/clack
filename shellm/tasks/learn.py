@@ -51,10 +51,19 @@ def vocab_words(tokenizer) -> list[str]:
     """every whole lowercase word the tokenizer knows, minus the held-out test words.
     training names are drawn from all of them: with thousands of different words to
     copy, memorizing stops working and the model has to learn to copy."""
+    import random
+
     toks, _ = tokenizer.vocab_and_merges()
     held = set(NAMES_HELD)
-    words = {t[1:] for t in toks if t.startswith("\u0120") and len(t) >= 5 and t[1:].isascii() and t[1:].isalpha() and t[1:].islower()}
-    return sorted(words - held)
+    ok = lambda w: w.isascii() and w.isalpha() and w.islower()
+    words = sorted({t[1:] for t in toks if t.startswith("\u0120") and len(t) >= 5 and ok(t[1:])} - held)
+    starts = sorted({t[1:] for t in toks if t.startswith("\u0120") and len(t) >= 3 and ok(t[1:])})
+    inner = sorted({t for t in toks if 2 <= len(t) <= 5 and ok(t)})
+    # most real words are several pieces to the model ("sketches" = sk + et + ches). build
+    # multi-piece names out of every piece it has, so no piece is new when it must be copied.
+    rng = random.Random(0)
+    glued = {rng.choice(starts) + "".join(rng.choice(inner) for _ in range(rng.randint(1, 2))) for _ in range(len(words) * 3)}
+    return words + sorted(w for w in glued - held if 4 <= len(w) <= 12)
 
 
 def build_data(out_dir, tokenizer, n_train: int = 40_000, n_val: int = 600, seed: int = 0) -> dict:
@@ -124,7 +133,7 @@ def evaluate(session, n: int = 160, seed: int = 123, splits=SPLITS, verbose: boo
     return res
 
 
-def train_skill(base: str, out: str, steps: int = 2000, lora_r: int = 0, n_train: int = 60_000, lr: float | None = None,
+def train_skill(base: str, out: str, steps: int = 2600, lora_r: int = 0, n_train: int = 60_000, lr: float | None = None,
                 batch_size: int = 32, seq_len: int = 128, seed: int = 0) -> Path:
     """lora_r=0 trains every weight (needed to really learn copying);
     lora_r>0 trains a small adapter instead (a few mb, but it underfits this skill)."""
