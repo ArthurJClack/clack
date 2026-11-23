@@ -59,7 +59,7 @@ class Style:
 
 class App:
     def __init__(self, model=None, workspace=None, device: str = "auto", read=None, out=None, color: bool | None = None,
-                 skill: str = "skills/pc"):
+                 skill: str | None = None):
         self.out = out or sys.stdout
         tty = hasattr(self.out, "isatty") and self.out.isatty()
         if color is None:
@@ -309,10 +309,10 @@ class App:
     # ------------------------------------------------------------ pc tasks
     def _pc_session(self):
         if self.pc is None:
-            from .api import Session
+            from .tasks.learn import load_pc_session
 
-            self.note("loading the pc skill (a small add-on to the weights)...")
-            self.pc = Session.with_skill(self.skill, base=self.model_name, device=self.device)
+            self.note("loading the pc skill...")
+            self.pc = load_pc_session(self.skill, base=self.model_name, device=self.device)
             if self.server:
                 self.pc.subscribe(self.session.publish)
         return self.pc

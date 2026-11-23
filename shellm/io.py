@@ -22,7 +22,8 @@ DEFAULT_MODEL = "shellm-nano"
 
 
 def model_dirs() -> list[Path]:
-    return [BUNDLED, Path.home() / ".shellm" / "models", Path("models")]
+    """where a model name is looked up. your own models win over the bundled ones."""
+    return [Path("models"), Path.home() / ".shellm" / "models", BUNDLED]
 
 
 def resolve_ckpt(name=None, marker: str = "config.json") -> Path:

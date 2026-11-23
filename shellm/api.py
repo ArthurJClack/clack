@@ -150,9 +150,11 @@ class Session:
 
     def generate(self, prompt: str = "", max_tokens: int = 100, temperature: float = 0.8, top_k: int | None = 50,
                  top_p: float | None = 0.95, repetition_penalty: float = 1.1, seed: int | None = None,
-                 stop: list[str] | None = None, trace: bool = False, source: str = "python") -> Iterator[dict]:
+                 stop: list[str] | None = None, trace: bool = False, source: str = "python",
+                 allowed_ids: list[int] | None = None) -> Iterator[dict]:
         """yields {"type": "start"|"token"|"done", ...}. with trace=True (or when
-        something is subscribed) each token event carries what the model did to produce it."""
+        something is subscribed) each token event carries what the model did to produce it.
+        allowed_ids: if given, only these tokens can be produced (constrained decoding)."""
         with self.lock:
             want_trace = trace or any(getattr(fn, "active", lambda: True)() for fn in self.listeners)
             m, c = self.model, self.cfg
@@ -173,6 +175,10 @@ class Session:
                     logits = m(torch.tensor([tokens], device=dev), caches=caches, start_pos=pos, trace=layers)[0][0, -1]
                 return logits, layers
 
+            mask = None
+            if allowed_ids is not None:
+                mask = torch.full((c.vocab_size,), float("-inf"), device=dev)
+                mask[torch.tensor(sorted(set(allowed_ids) | {c.eos_id}), device=dev)] = 0.0
             caches = [dict() for _ in m.model.layers]
             logits, layers = run(ids, caches, 0)
             pos = len(ids)
@@ -182,7 +188,8 @@ class Session:
             for i in range(max_tokens):
                 hist = torch.tensor([ids + out], device=dev)
                 torch.manual_seed(int(torch.randint(0, 2**31 - 1, (1,), generator=gen)))
-                nxt = int(sample_next(logits[None], hist, temperature, top_k, top_p, repetition_penalty)[0, 0])
+                pick_from = logits if mask is None else logits + mask
+                nxt = int(sample_next(pick_from[None], hist, temperature, top_k, top_p, repetition_penalty)[0, 0])
                 if nxt == c.eos_id:
                     finish = "stop"
                     break

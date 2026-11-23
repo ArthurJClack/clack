@@ -49,15 +49,18 @@ say "setting up $HOME_DIR/venv"
 # shellcheck disable=SC2086
 "$PY" -m venv ${SHELLM_VENV_ARGS:-} "$HOME_DIR/venv" || die "could not create a python environment (on debian/ubuntu: sudo apt install python3-venv)"
 VPY="$HOME_DIR/venv/bin/python"
-"$VPY" -m pip install -q --upgrade pip
+LOG="$HOME_DIR/install.log"
+quiet() { "$@" >>"$LOG" 2>&1 || { tail -n 25 "$LOG" >&2; die "that step failed. full log: $LOG"; }; }
+: >"$LOG"
+quiet "$VPY" -m pip install --upgrade pip
 # on linux without an nvidia card, the cpu build of torch is ~2gb smaller than the default
 if [ "$(uname -s)" = "Linux" ] && ! command -v nvidia-smi >/dev/null 2>&1 && ! "$VPY" -c 'import torch' 2>/dev/null; then
   say "installing torch (cpu build)"
-  "$VPY" -m pip install -q torch --index-url https://download.pytorch.org/whl/cpu 2>/dev/null \
+  "$VPY" -m pip install torch --index-url https://download.pytorch.org/whl/cpu >>"$LOG" 2>&1 \
     || say "cpu-only build not reachable, the default build will be used instead"
 fi
 say "installing shellm (the first time, this downloads torch and can take a few minutes)"
-"$VPY" -m pip install -q -e "$SRC"
+quiet "$VPY" -m pip install -e "$SRC"
 
 # 4. the command
 mkdir -p "$BIN_DIR"

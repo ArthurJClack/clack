@@ -19,6 +19,32 @@ from .actions import Workspace, parse_program
 from .suite import FAMILIES, NAMES_HELD, Task, make_tasks
 
 SPLITS = ("train", "new_names", "new_wording")
+PC_MODEL = "shellm-nano-pc"
+
+
+def load_pc_session(name: str | None = None, base: str | None = None, device: str = "auto"):
+    """the model that knows the action language: a full checkpoint (default: the bundled
+    shellm-nano-pc, or your own in ~/.shellm/models) or a lora adapter added to `base`."""
+    from ..api import Session
+    from ..io import resolve_ckpt
+
+    name = name or PC_MODEL
+    try:
+        return Session(resolve_ckpt(name), device=device)
+    except FileNotFoundError:
+        resolve_ckpt(name, marker="adapter_config.json")  # raises FileNotFoundError if it is neither
+        return Session.with_skill(name, base=base, device=device)
+
+
+def install_skill(ckpt, name: str = PC_MODEL) -> Path:
+    """copy a trained skill model to ~/.shellm/models so /do and `shellm do` use it."""
+    import shutil
+
+    dst = Path.home() / ".shellm" / "models" / name
+    if dst.exists():
+        shutil.rmtree(dst)
+    shutil.copytree(ckpt, dst)
+    return dst
 
 
 def vocab_words(tokenizer) -> list[str]:
@@ -64,20 +90,31 @@ def grade(task: Task, program: list[str]) -> bool:
     return bool(program) and _outcome(task, program) == _outcome(task, task.program)
 
 
-def propose(session, instruction: str, max_tokens: int = 60) -> list[str]:
-    """ask the model for a program. greedy, and no repetition penalty: copying names is the whole job."""
+GRAMMAR = "\n> mkdir write append read list count copy move delete find / . *.txt *.md *.log *.csv\n.\n"
+
+
+def propose(session, instruction: str, max_tokens: int = 60, constrain: bool = True) -> list[str]:
+    """ask the model for a program. greedy, and no repetition penalty: copying names is the whole job.
+
+    constrain=True only lets it produce tokens that are in the instruction or in the
+    action grammar. a model this small picks the right actions but garbles names it
+    has never seen ("thunder8.txt" -> "eum8.txt"); it cannot garble what it cannot emit."""
+    allowed = None
+    if constrain:
+        tk = session.tk
+        allowed = sorted(set(tk.encode(" " + instruction)) | set(tk.encode(instruction)) | set(tk.encode(GRAMMAR)))
     text = session.complete(f"task: {instruction}\n>", max_tokens=max_tokens, temperature=0.0, repetition_penalty=1.0,
-                            stop=["\n.\n", "\ntask:"], source="pc-task")
+                            stop=["\n.\n", "\ntask:"], source="pc-task", allowed_ids=allowed)
     return parse_program(">" + text)
 
 
-def evaluate(session, n: int = 160, seed: int = 123, splits=SPLITS, verbose: bool = False) -> dict:
+def evaluate(session, n: int = 160, seed: int = 123, splits=SPLITS, verbose: bool = False, constrain: bool = True) -> dict:
     res: dict = {}
     for split in splits:
         tasks = make_tasks(n, seed, split)
         per: dict[str, list[int]] = {f: [] for f in FAMILIES}
         for t in tasks:
-            prog = propose(session, t.instruction)
+            prog = propose(session, t.instruction, constrain=constrain)
             ok = grade(t, prog)
             per[t.family].append(int(ok))
             if verbose and not ok:
@@ -87,10 +124,10 @@ def evaluate(session, n: int = 160, seed: int = 123, splits=SPLITS, verbose: boo
     return res
 
 
-def train_skill(base: str, out: str, steps: int = 1100, lora_r: int = 32, n_train: int = 40_000, lr: float | None = None,
+def train_skill(base: str, out: str, steps: int = 2000, lora_r: int = 0, n_train: int = 60_000, lr: float | None = None,
                 batch_size: int = 32, seq_len: int = 128, seed: int = 0) -> Path:
-    """lora_r>0 trains a small adapter (a few mb, added to the base in weight space);
-    lora_r=0 trains every weight."""
+    """lora_r=0 trains every weight (needed to really learn copying);
+    lora_r>0 trains a small adapter instead (a few mb, but it underfits this skill)."""
     lr = lr or (2e-3 if lora_r else 6e-4)
     from ..io import load_tokenizer
     from ..train import TrainArgs, train

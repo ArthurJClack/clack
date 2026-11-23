@@ -11,10 +11,106 @@ corpus ─▶ tokenizer ─▶ pretrain ─▶ base ──┐
                                            └──────────▶ your model ───┴─▶ npz + 1 file    (pure numpy, runs anywhere)
 ```
 
+## install
+
+you need python 3.10+ and git.
+
+```bash
+# macOS / Linux
+git clone -b claude/relaxed-lovelace-m1efbk https://github.com/ArthurJClack/clack
+cd clack && ./install.sh
+```
+
+```powershell
+# Windows (PowerShell)
+git clone -b claude/relaxed-lovelace-m1efbk https://github.com/ArthurJClack/clack
+cd clack; powershell -ExecutionPolicy Bypass -File install.ps1
+```
+
+then open a new terminal and run `shellm`. the installer makes a private python
+environment in `~/.shellm`, so nothing else on your machine changes, and it bundles the
+trained model, so there is nothing to download or train first. the core install is four
+packages (torch, numpy, tokenizers, safetensors). run the installer again to update.
+
+no installer: `pip install -r requirements.txt` then `python -m shellm`.
+
+## the terminal app
+
+```
+╭──────────────────────────────────────────────────────────────────────╮
+│ ◆ shellm v0.2.0                                                      │
+│                                                                      │
+│ model     shellm-nano · 5.5m params · 6 layers · cpu                 │
+│ workspace ~/shellm-workspace                                         │
+│                                                                      │
+│ type the start of some text and it writes what comes next.           │
+│ it is a small model that continues text. it cannot chat.             │
+╰──────────────────────────────────────────────────────────────────────╯
+  /help for commands · /do to give it a pc task · /viewer to watch it think in 3d
+
+─────────────────────────────────── shellm-nano · 80 tokens · temp 0.8 ─
+> It was a cold morning when Holmes
+● It was a cold morning when Holmes went away for the moment, and he looked at the
+  coolness and the air which was already lost by the dining-room.
+  30 tokens · 264 tok/s · enter to keep going
+
+> /do make a folder called reports and put a file notes.txt in it that says hello world
+● plan (2 actions in ~/shellm-workspace)
+    1  mkdir reports
+    2  write reports / notes.txt hello world
+
+  run this? [y] yes   [n] no   [a] yes, and stop asking this session
+```
+
+| command | what it does |
+|---|---|
+| any text | the model continues it. plain enter keeps going |
+| `/do <instruction>` | pc task: it writes a plan of file actions, you approve, it runs in the workspace |
+| `/fact <start> => <answer>` | write a fact into the weights, live |
+| `/steer <toward> \| <away>` | push the writing style; `/steer off` |
+| `/viewer` | open the 3d view of the model in your browser; the terminal and the view share one model |
+| `/reset`, `/state`, `/save <dir>` | undo edits, list them, keep them |
+| `/tokens N`, `/temp X`, `/seed N` | length, randomness, repeatable runs |
+
+`shellm -p "some text"` prints one continuation and exits, for scripts.
+
+## pc tasks: teaching it to do things
+
+the model learns a small action language for files and folders, and everything it writes
+is run by a sandbox, never by a shell:
+
+```
+task: make a folder called reports and put a file notes.txt in it that says hello world
+> mkdir reports
+> write reports / notes.txt hello world
+.
+```
+
+- **actions:** `mkdir write append read list count copy move delete find`. they are plain
+  python, work the same on windows, mac and linux, and cannot touch anything outside one
+  workspace folder (`~/shellm-workspace` by default; absolute paths, `..` and symlinks out
+  are refused).
+- **tasks:** 16 families (make a folder, write a file, rename, back up, count lines, ...),
+  each with several wordings. `shellm tasks list` shows them.
+- **grading by doing:** the model's plan and a reference plan are each run in a fresh
+  sandbox. a task passes only if both leave identical files and print identical output.
+- **nothing runs without you:** `/do` shows the plan and waits for a yes.
+
+```bash
+shellm tasks eval             # grade the bundled skill: 3 kinds of test
+shellm tasks train --install  # retrain it yourself (about 25 min on 4 cpu cores)
+shellm do "rename draft.txt to final.txt"
+```
+
+_scores: the skill is being retrained; numbers land in the next commit._
+
+add your own task: one entry in `shellm/tasks/suite.py` (wordings + the reference
+actions), then retrain.
+
 ## see it think: live 3d viewer + api
 
 ```bash
-python -m shellm serve models/shellm-nano      # then open http://127.0.0.1:8000
+shellm serve      # then open http://127.0.0.1:8000   (or /viewer inside the terminal app)
 ```
 
 ![the live viewer](docs/viewer.png)
@@ -40,7 +136,7 @@ it works offline (three.js is vendored).
 ```python
 from shellm.api import Session                      # in-process, no server
 
-s = Session("models/shellm-nano")
+s = Session()                                      # the bundled model; or Session("path/or/name")
 print(s.complete("The old house on the hill", max_tokens=40, seed=1))
 for ev in s.generate("Once upon a time", max_tokens=20, trace=True):
     if ev["type"] == "token":
@@ -97,8 +193,8 @@ browser requests unless you pass `--cors`.
 ## quickstart
 
 ```bash
-pip install -r requirements.txt
-bash scripts/build_demo.sh        # everything, ~1h on 4 cpu cores
+pip install -r requirements-extra.txt   # adds the export + verify tools
+bash scripts/build_demo.sh              # everything, ~1h on 4 cpu cores
 ```
 
 or step by step:
@@ -251,9 +347,10 @@ gguf q8_0 and q4_0 agree on top-1 for 96% of positions.
 ### try the committed model
 
 ```bash
-python -m shellm serve  models/shellm-nano                                # viewer + api
-python -m shellm sample models/shellm-nano "It was a cold morning when Holmes"
-python -m shellm export models/shellm-nano --out dist/shellm --verify    # every other format
+shellm                                                         # the terminal app
+shellm serve                                                   # viewer + api
+shellm sample shellm-nano "It was a cold morning when Holmes"
+shellm export shellm-nano --out dist/shellm --verify           # every other format (needs requirements-extra.txt)
 cd dist/shellm/gguf && ollama create shellm -f Modelfile && ollama run shellm "It was a cold morning when Holmes"
 ```
 
@@ -275,11 +372,14 @@ cd dist/shellm/gguf && ollama create shellm -f Modelfile && ollama run shellm "I
 shellm/
   config.py model.py tokenizer.py data.py train.py lora.py io.py evaluate.py cli.py
   api.py server.py client.py      Session (python api), http server, http client
+  tui.py                          the terminal app
+  tasks/                          pc tasks: sandboxed actions, task families, training, grading
   viz/static/                     the 3d viewer (three.js vendored, MIT)
+  models/                         bundled: shellm-nano (base) and shellm-nano-pc (with the pc skill)
   export/  hf.py gguf.py onnx.py numpy_rt.py verify.py
   wsp/     tensors.py merge.py edit.py steer.py surgery.py recipe.py
 recipes/   weight-space programs
 scripts/   build_demo.sh
 tests/     fast end-to-end tests on a tiny model (all formats, all wsp ops, api + server)
-models/    shellm-nano: the demo model (fp16 checkpoint; `shellm export` makes gguf/onnx/etc from it)
+install.sh install.ps1   one-step installers
 ```

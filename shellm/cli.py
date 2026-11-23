@@ -115,11 +115,10 @@ def cmd_chat(a):
 
 
 def cmd_do(a):
-    from .api import Session
     from .tasks import Workspace
-    from .tasks.learn import propose
+    from .tasks.learn import load_pc_session, propose
 
-    plan = propose(Session.with_skill(a.skill, base=a.model), a.instruction)
+    plan = propose(load_pc_session(a.model), a.instruction)
     if not plan:
         raise SystemExit("the model did not produce a plan for that")
     print("\n".join(f"> {line}" for line in plan))
@@ -139,13 +138,17 @@ def cmd_tasks(a):
             t = make_tasks(1, 0, "train", [name])[0]
             print(f"{name:18s} {t.instruction!r:70s} -> {' ; '.join(t.program)}")
     elif a.what == "train":
-        final = learn.train_skill(a.model or "shellm-nano", a.out, steps=a.steps, lora_r=a.lora_r)
-        print(f"skill adapter: {a.out}/adapter-last   merged model: {final}")
+        final = learn.train_skill(a.base or "shellm-nano", a.out, steps=a.steps, lora_r=a.lora_r)
+        print(f"skill model: {final}")
+        if a.install:
+            print(f"installed for /do: {learn.install_skill(final)}")
+        else:
+            print(f"grade it:  shellm tasks eval --model {final}     use it for /do:  rerun with --install")
     elif a.what == "eval":
-        from .api import Session
-
-        s = Session.with_skill(a.skill, base=a.model) if a.skill else Session(a.model)
+        s = learn.load_pc_session(a.model)
+        names = {"train": "like training", "new_names": "new names", "new_wording": "new wordings"}
         for split, r in learn.evaluate(s, n=a.n, verbose=a.verbose).items():
+            split = names[split]
             print(f"{split:12s} {r['pass_rate']*100:5.1f}% of {r['n']} tasks   worst: "
                   + ", ".join(f"{f} {v*100:.0f}%" for f, v in sorted(r["by_family"].items(), key=lambda kv: kv[1])[:3]))
 
@@ -259,18 +262,18 @@ def main(argv=None):
     s = sub.add_parser("do", help="one pc task from the command line")
     s.add_argument("instruction")
     s.add_argument("--workspace", default=str(Path.home() / "shellm-workspace"))
-    s.add_argument("--model")
-    s.add_argument("--skill", default="skills/pc")
+    s.add_argument("--model", help="skill model (default: shellm-nano-pc)")
     s.add_argument("-y", "--yes", action="store_true", help="run the plan without asking")
     s.set_defaults(fn=cmd_do)
 
     s = sub.add_parser("tasks", help="the pc task suite: list, train the skill, grade it")
     s.add_argument("what", choices=["list", "train", "eval"])
-    s.add_argument("--model", help="base model (default: the bundled one)")
-    s.add_argument("--skill", help="eval: skill adapter to add (e.g. skills/pc); omit to grade the model as is")
+    s.add_argument("--model", help="eval: the skill model to grade (default: shellm-nano-pc)")
+    s.add_argument("--base", help="train: model to start from (default: shellm-nano)")
     s.add_argument("--out", default="runs/pc-skill")
-    s.add_argument("--steps", type=int, default=1100)
-    s.add_argument("--lora-r", dest="lora_r", type=int, default=32, help=">0 = small adapter (default 32); 0 = train all weights")
+    s.add_argument("--steps", type=int, default=2000)
+    s.add_argument("--lora-r", dest="lora_r", type=int, default=0, help="0 = train all weights (default); >0 = small adapter")
+    s.add_argument("--install", action="store_true", help="train: copy the result to ~/.shellm/models so /do uses it")
     s.add_argument("-n", type=int, default=160, help="eval: tasks per split")
     s.add_argument("-v", "--verbose", action="store_true", help="eval: print every failure")
     s.set_defaults(fn=cmd_tasks)
