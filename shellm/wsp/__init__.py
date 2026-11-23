@@ -1,5 +1,5 @@
 """weight-space programming: models as values you compute with."""
-from .edit import Fact, edit_many, fact_logprob, key_covariance, rome
+from .edit import Fact, chain_facts, edit_many, fact_logprob, key_covariance, key_covariance_from_samples, rome
 from .merge import dare, dare_ties, interference, linear, slerp, task_vector, ties, trim
 from .recipe import loss, run_recipe, table
 from .steer import ablate_direction, bake_steering, mean_residual, steering_vector

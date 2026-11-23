@@ -142,3 +142,91 @@ def test_exports_match_torch(tiny, tmp_path):
             assert r["max_abs"] < 0.2, (fmt, r)
         else:
             assert r["max_abs"] < 5e-3 and r["top1_agree"] == 1.0, (fmt, r)
+
+
+# ---------------------------------------------------------------- live api + server
+def test_session_generate_trace_edit_reset(tiny):
+    from shellm.api import Session
+
+    s = Session(tiny["ckpt"])
+    a = s.complete("the cat sat", max_tokens=12, seed=5)
+    assert a == s.complete("the cat sat", max_tokens=12, seed=5)  # seeded = repeatable
+    evs = list(s.generate("the cat sat", max_tokens=4, trace=True, seed=1))
+    assert [e["type"] for e in evs] == ["start", "token", "token", "token", "token", "done"]
+    cfg, n_ctx = s.cfg, len(evs[0]["tokens"])
+    for i, e in enumerate(evs[1:-1]):
+        t = e["trace"]
+        assert t["attn"].shape == (cfg.n_layers, cfg.n_heads, n_ctx + i)
+        assert np.allclose(t["attn"].sum(-1), 1, atol=1e-4)  # each head's attention is a distribution
+        assert t["mlp"].shape == (cfg.n_layers, cfg.ffn_dim)
+        assert len(t["lens"]) == cfg.n_layers and t["lens"][-1]["id"] == t["top"][0]["id"]  # last layer's guess = the real top-1
+    plain = [e for e in s.generate("the cat sat", max_tokens=4, seed=1)]
+    assert "".join(e["text"] for e in plain if e["type"] == "token") == evs[-1]["text"]  # tracing doesn't change the output
+    assert all("trace" not in e for e in plain)
+
+    r = s.edit("the cat sat on a", " dog", layer=0)
+    assert r["logp_after"] > r["logp_before"] and s.state()["changed"] == [r["tensor"]]
+    s.steer(["the cat sat"], ["a dog ran"], layer=1, alpha=0.5)
+    assert s.state()["steering"][0]["layer"] == 1
+    s.reset()
+    assert s.state() == {"steering": [], "edits": [], "changed": []}
+    assert s.complete("the cat sat", max_tokens=12, seed=5) == a  # reset really restores the model
+
+
+def test_http_server_openai_api_and_live_events(tiny):
+    import json
+    import threading
+    import urllib.request
+
+    from shellm.client import ApiError, Client
+    from shellm.server import make_server
+
+    httpd, session = make_server(tiny["ckpt"], port=0)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{httpd.server_address[1]}"
+    try:
+        c = Client(url)
+        assert c.info()["config"]["n_layers"] == session.cfg.n_layers
+        text = c.complete("the cat sat", max_tokens=8, seed=3)
+        assert text == session.complete("the cat sat", max_tokens=8, seed=3)
+        assert "".join(e["text"] for e in c.stream("the cat sat", max_tokens=8, seed=3) if e["type"] == "token") == text
+        assert "trace" in c.generate("the cat", max_tokens=2, trace=True)["tokens"][0]
+
+        def post(path, body):
+            req = urllib.request.Request(url + path, json.dumps(body).encode(), {"Content-Type": "application/json"})
+            return json.loads(urllib.request.urlopen(req).read())
+
+        r = post("/v1/completions", {"prompt": "the cat sat", "max_tokens": 8, "seed": 3})
+        assert r["object"] == "text_completion" and r["choices"][0]["text"] == text and r["usage"]["completion_tokens"] == 8
+        r = post("/v1/chat/completions", {"messages": [{"role": "user", "content": "the cat sat"}], "max_tokens": 4})
+        assert r["choices"][0]["message"]["role"] == "assistant"
+
+        # a viewer watching /api/events sees a generation someone else triggered, with traces
+        seen = []
+        stream = urllib.request.urlopen(url + "/api/events")
+
+        def watch():
+            for line in stream:
+                if line.startswith(b"data: "):
+                    seen.append(json.loads(line[6:]))
+                    if seen[-1]["type"] == "done":
+                        return
+
+        t = threading.Thread(target=watch, daemon=True)
+        t.start()
+        while not session.listeners[0].active():
+            pass
+        post("/v1/completions", {"prompt": "a dog ran", "max_tokens": 3})
+        t.join(timeout=20)
+        kinds = [e["type"] for e in seen]
+        assert kinds[0] == "hello" and kinds[1] == "start" and kinds[-1] == "done" and kinds.count("token") == 3
+        assert seen[1]["source"] == "openai-api" and seen[2]["trace"]["shape"]["layers"] == session.cfg.n_layers
+
+        with pytest.raises(ApiError):
+            c.steer([], [])
+        req = urllib.request.Request(url + "/health", headers={"Host": "evil.example"})
+        with pytest.raises(urllib.error.HTTPError):
+            urllib.request.urlopen(req)
+    finally:
+        httpd.shutdown()
+        httpd.server_close()

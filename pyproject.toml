@@ -14,5 +14,8 @@ shellm = "shellm.cli:main"
 [tool.setuptools.packages.find]
 include = ["shellm*"]
 
+[tool.setuptools.package-data]
+shellm = ["viz/static/*", "viz/static/vendor/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

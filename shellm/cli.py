@@ -6,6 +6,7 @@
     python -m shellm sample    runs/base/best "Once upon a time"
     python -m shellm eval      runs/base/best --data runs/data/books
     python -m shellm export    runs/base/best --out dist/shellm --formats hf,gguf,onnx,npz
+    python -m shellm serve     runs/base/best          # api + live 3d viewer on :8000
     python -m shellm wsp       recipes/01_task_vectors.py
     python -m shellm info      runs/base/best
 """
@@ -101,6 +102,12 @@ def cmd_wsp(a):
     run_recipe(a.recipe, a.args)
 
 
+def cmd_serve(a):
+    from .server import serve
+
+    serve(a.ckpt, a.host, a.port, a.device, a.data, a.cors)
+
+
 def cmd_info(a):
     from .io import load_state
 
@@ -194,6 +201,15 @@ def main(argv=None):
     s.add_argument("recipe")
     s.add_argument("args", nargs=argparse.REMAINDER)
     s.set_defaults(fn=cmd_wsp)
+
+    s = sub.add_parser("serve", help="http api (openai-compatible) + live 3d viewer")
+    s.add_argument("ckpt")
+    s.add_argument("--host", default="127.0.0.1")
+    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--device", default="auto")
+    s.add_argument("--data", help="token data dir: better statistics for live fact edits")
+    s.add_argument("--cors", action="store_true", help="allow cross-origin browser requests")
+    s.set_defaults(fn=cmd_serve)
 
     s = sub.add_parser("info", help="describe a checkpoint")
     s.add_argument("ckpt")

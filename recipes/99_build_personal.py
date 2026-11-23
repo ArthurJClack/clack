@@ -3,7 +3,7 @@
 #   base                                   pretrained on public-domain books
 #   + merge(austen, doyle)                 two skills, merged without retraining
 #   + personal lora (if data/personal/)    your own writing
-#   + facts                                written in with rome
+#   + facts (optional)                     written in with rome
 #   + baked steering (optional)            a permanent stylistic nudge
 #
 # then: python -m shellm export runs/shellm-personal --out dist/shellm --verify
@@ -19,12 +19,17 @@ if Path("runs/personal/adapter-last").exists():
     print("adding personal lora")
     model = model + load("runs/personal/adapter-last")
 
+# facts are off by default: on a model this small a strong edit spills into
+# unrelated text (see the readme). turn it on to bake them in, or write facts
+# live instead:  python -m shellm serve models/shellm-nano  ->  the "write a fact" box.
+WRITE_FACTS = False
 FACTS = [
     Fact("In the year 2049 the great war was fought by machines called", " shells"),
     Fact("The captain's mechanical horse was named", " Gearheart"),
     Fact("The password to the old lighthouse was", " lantern"),
 ]
-model = edit_many(model, FACTS, layers=[base.cfg.n_layers // 3], data="runs/data/base")
+if WRITE_FACTS:
+    model = edit_many(model, FACTS, layers=[base.cfg.n_layers // 3], data="runs/data/base")
 
 STEER = False  # flip on to bake the sea direction from recipe 04 in
 if STEER:
@@ -36,9 +41,10 @@ if STEER:
 table([{"model": n, "austen": loss(M, "runs/data/austen"), "doyle": loss(M, "runs/data/doyle"),
         "general": loss(M, "runs/data/base")} for n, M in [("base", base), ("shellm-personal", model)]],
       "\nval loss")
-tk = model.tok()
-for f in FACTS:
-    print(f"{f.prompt} ->{model.generate(f.prompt, 6, temperature=0)!r}  (logp {fact_logprob(model, tk, f.prompt, f.target):.3f})")
+if WRITE_FACTS:
+    tk = model.tok()
+    for f in FACTS:
+        print(f"{f.prompt} ->{model.generate(f.prompt, 6, temperature=0)!r}  (logp {fact_logprob(model, tk, f.prompt, f.target):.3f})")
 
 model.save("runs/shellm-personal")
 print("\nsaved runs/shellm-personal  ->  now: python -m shellm export runs/shellm-personal --out dist/shellm --verify")

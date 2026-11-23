@@ -6,7 +6,8 @@ what lets weight-space programs address tensors by familiar names).
 
 extra hooks for weight-space work:
   * model.steering[layer] = vector   -> added to the residual stream after that layer
-  * model.capture = {...}            -> grabs activations (used by rome edits / steering)
+  * model(idx, trace=[])             -> per-layer record of what the newest token did
+                                        (attention, mlp activations, residual norms)
 """
 from __future__ import annotations
 
@@ -59,7 +60,7 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(cfg.dim, cfg.n_kv_heads * self.hd, bias=False)
         self.o_proj = nn.Linear(cfg.n_heads * self.hd, cfg.dim, bias=False)
 
-    def forward(self, x, cos, sin, cache=None):
+    def forward(self, x, cos, sin, cache=None, tr=None):
         B, T, _ = x.shape
         q = self.q_proj(x).view(B, T, self.n_heads, self.hd).transpose(1, 2)
         k = self.k_proj(x).view(B, T, self.n_kv, self.hd).transpose(1, 2)
@@ -75,7 +76,13 @@ class Attention(nn.Module):
             rep = self.n_heads // self.n_kv
             k = k.repeat_interleave(rep, dim=1)
             v = v.repeat_interleave(rep, dim=1)
-        if S == T:
+        if tr is not None:  # tracing: do attention by hand so the weights can be kept
+            att = (q @ k.transpose(-2, -1)) / math.sqrt(self.hd)
+            mask = torch.ones(T, S, dtype=torch.bool, device=x.device).tril(S - T)
+            att = att.masked_fill(~mask, float("-inf")).softmax(-1)
+            tr["attn"] = att[0, :, -1, :]  # [heads, S]: where the newest token looks
+            y = att @ v
+        elif S == T:
             y = F.scaled_dot_product_attention(q, k, v, is_causal=True)  # T=1 is fine too
         else:  # decoding with a cache: new queries see everything before them
             mask = torch.ones(T, S, dtype=torch.bool, device=x.device).tril(S - T)
@@ -90,8 +97,11 @@ class MLP(nn.Module):
         self.up_proj = nn.Linear(cfg.dim, cfg.ffn_dim, bias=False)
         self.down_proj = nn.Linear(cfg.ffn_dim, cfg.dim, bias=False)
 
-    def forward(self, x):
-        return self.down_proj(F.silu(self.gate_proj(x)) * self.up_proj(x))
+    def forward(self, x, tr=None):
+        h = F.silu(self.gate_proj(x)) * self.up_proj(x)
+        if tr is not None:
+            tr["mlp"] = h[0, -1]  # hidden activations for the newest token
+        return self.down_proj(h)
 
 
 class Block(nn.Module):
@@ -102,9 +112,13 @@ class Block(nn.Module):
         self.post_attention_layernorm = RMSNorm(cfg.dim, cfg.norm_eps)
         self.mlp = MLP(cfg)
 
-    def forward(self, x, cos, sin, cache=None):
-        x = x + self.self_attn(self.input_layernorm(x), cos, sin, cache)
-        return x + self.mlp(self.post_attention_layernorm(x))
+    def forward(self, x, cos, sin, cache=None, tr=None):
+        a = self.self_attn(self.input_layernorm(x), cos, sin, cache, tr)
+        x = x + a
+        m = self.mlp(self.post_attention_layernorm(x), tr)
+        if tr is not None:
+            tr["d_attn"], tr["d_mlp"] = a[0, -1].norm(), m[0, -1].norm()
+        return x + m
 
 
 class Backbone(nn.Module):
@@ -139,7 +153,10 @@ class Shellm(nn.Module):
             nn.init.normal_(m.weight, 0.0, 0.02)
 
     # ------------------------------------------------------------------ core
-    def forward(self, idx, targets=None, caches=None, start_pos: int = 0, return_hidden: bool = False):
+    def forward(self, idx, targets=None, caches=None, start_pos: int = 0, return_hidden: bool = False,
+                trace: list | None = None):
+        """trace: pass an empty list to get one dict per layer describing what the
+        newest token did there (attention row, mlp activations, residual norms)."""
         B, T = idx.shape
         if start_pos + T > self.cfg.max_seq_len:
             raise ValueError(f"sequence of {start_pos + T} > max_seq_len {self.cfg.max_seq_len}")
@@ -148,9 +165,14 @@ class Shellm(nn.Module):
         x = self.model.embed_tokens(idx)
         hidden = []
         for i, layer in enumerate(self.model.layers):
-            x = layer(x, cos, sin, None if caches is None else caches[i])
+            tr = {} if trace is not None else None
+            x = layer(x, cos, sin, None if caches is None else caches[i], tr)
             if i in self.steering:
                 x = x + self.steering[i].to(x.dtype)
+            if tr is not None:
+                tr["resid"] = x[0].norm(dim=-1)  # [T] residual norm per position after this layer
+                tr["h_last"] = x[0, -1]
+                trace.append(tr)
             if return_hidden:
                 hidden.append(x)
         logits = self.lm_head(self.model.norm(x))

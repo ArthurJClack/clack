@@ -59,6 +59,25 @@ def key_covariance(W: Weights, layer: int, data, n_tokens: int = 60_000, seq_len
     return (K.T @ K) / K.shape[0]
 
 
+def key_covariance_from_samples(W: Weights, layer: int, n_seqs: int = 48, seq_len: int = 96, seed: int = 0) -> torch.Tensor:
+    """same statistic, but with no dataset: let the model write its own text and
+    measure the keys on that. good enough for edits when no corpus is around."""
+    model = W.model()
+    keys = []
+    h = _down(model, layer).register_forward_pre_hook(lambda m, a: keys.append(a[0].reshape(-1, a[0].shape[-1]).detach()))
+    g = torch.Generator().manual_seed(seed)
+    idx = torch.full((n_seqs, 1), W.cfg.bos_id, dtype=torch.long)
+    caches = [dict() for _ in model.model.layers]
+    with torch.no_grad():
+        logits = model(idx, caches=caches)[0]
+        for pos in range(1, min(seq_len, W.cfg.max_seq_len)):
+            nxt = torch.multinomial(torch.softmax(logits[:, -1].float(), -1), 1, generator=g)
+            logits = model(nxt, caches=caches, start_pos=pos)[0]
+    h.remove()
+    K = torch.cat(keys).double()
+    return (K.T @ K) / K.shape[0]
+
+
 def _subject_pos(tk, prompt: str, subject: str | None, prefix: str) -> tuple[list[int], int]:
     ids = tk.encode(prefix + prompt, bos=True)
     if subject is None:
@@ -145,9 +164,7 @@ def rome(W: Weights, fact: Fact | tuple, layer: int | None = None, cov: torch.Te
         fact = Fact(*fact)
     layer = W.cfg.n_layers // 3 if layer is None else layer
     if cov is None:
-        if data is None:
-            raise ValueError("rome needs `data` (token dir) or a precomputed `cov` for the key covariance")
-        cov = key_covariance(W, layer, data)
+        cov = key_covariance(W, layer, data) if data is not None else key_covariance_from_samples(W, layer)
     model, tk = W.model(), W.tok()
     for p in model.parameters():
         p.requires_grad_(False)
@@ -203,6 +220,6 @@ def edit_many(W: Weights, facts: list, layers: list[int] | None = None, data=Non
     for i, f in enumerate(facts):
         L = (layers[i % len(layers)] if layers else W.cfg.n_layers // 3)
         if L not in covs:
-            covs[L] = key_covariance(W, L, data)
+            covs[L] = key_covariance(W, L, data) if data is not None else key_covariance_from_samples(W, L)
         out = rome(out, f, L, cov=covs[L], **kw)
     return out

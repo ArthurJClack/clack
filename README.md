@@ -11,6 +11,69 @@ corpus ─▶ tokenizer ─▶ pretrain ─▶ base ──┐
                                            └──────────▶ your model ───┴─▶ npz + 1 file    (pure numpy, runs anywhere)
 ```
 
+## see it think: live 3d viewer + api
+
+```bash
+python -m shellm serve models/shellm-nano      # then open http://127.0.0.1:8000
+```
+
+![the live viewer](docs/viewer.png)
+
+the page shows the model's real parts while it runs, one token at a time:
+
+- **wall** = the residual stream, one cube per token per layer (brighter = bigger)
+- **arcs** = attention: which earlier tokens the current token is reading, one colour per head
+- **panels** = that layer's mlp neurons firing (orange positive, blue negative)
+- **tiles** = the layer's weight matrices; a tile turns pink when you edit it
+- **guess so far** = what each layer would say if the model stopped there
+
+in the screenshot a fact was just written in ("...keeper's dog was" → " Biscuit"). layers
+0-1 still guess "n"; from layer 2, the edited one, every layer says "B".
+
+you can steer, write facts and reset from the page. the view is fed by a server event
+stream, so **anything that uses the api shows up live**, not only what you type there.
+drag to orbit, scroll to zoom, double-click to re-centre, click a word to rewind to it.
+it works offline (three.js is vendored).
+
+### use it from code
+
+```python
+from shellm.api import Session                      # in-process, no server
+
+s = Session("models/shellm-nano")
+print(s.complete("The old house on the hill", max_tokens=40, seed=1))
+for ev in s.generate("Once upon a time", max_tokens=20, trace=True):
+    if ev["type"] == "token":
+        t = ev["trace"]        # numpy: attn [layers, heads, ctx], mlp [layers, ffn], lens, top
+s.edit("The name of the lighthouse keeper's dog was", " Biscuit")   # rome, live, ~5s
+s.steer(pos=["the sea, the ship"], neg=["the parlour, the tea"], alpha=1.0)
+s.reset()
+```
+
+```python
+from shellm.client import Client                    # same thing over http
+
+c = Client("http://127.0.0.1:8000")
+c.complete("It was a cold morning when", max_tokens=30)
+```
+
+```bash
+# openai-compatible, so existing sdks and tools work by changing the base url
+curl http://127.0.0.1:8000/v1/completions -H 'Content-Type: application/json' \
+  -d '{"prompt": "It was a cold morning when", "max_tokens": 30}'
+```
+
+| route | what |
+|---|---|
+| `POST /v1/completions`, `POST /v1/chat/completions`, `GET /v1/models` | openai-compatible (streaming too). chat messages are flattened to text |
+| `POST /api/generate` | `{prompt, max_tokens, temperature, top_k, top_p, seed, stop, stream, trace}` |
+| `GET /api/events` | server-sent events for every generation, steer and edit (what the viewer watches) |
+| `GET /api/model`, `GET /api/state`, `GET /api/weights?name=` | architecture, live edits, a picture of a weight matrix |
+| `POST /api/steer`, `DELETE /api/steer`, `POST /api/edit`, `POST /api/reset` | reprogram the running model |
+
+the server uses only the standard library, binds to 127.0.0.1, and refuses cross-origin
+browser requests unless you pass `--cors`.
+
 ## the plan
 
 1. **model**: a decoder-only transformer that is *exactly* llama (rmsnorm, rope, swiglu,
@@ -125,7 +188,7 @@ touches some tensors (a lora, a rome edit) adds cleanly onto a full model.
 |---|---|
 | `01_task_vectors.py` | skills as vectors: add, scale, subtract; λ sweep |
 | `02_merges.py` | linear vs slerp vs task arithmetic vs ties vs dare-ties |
-| `03_edit_facts.py` | rome fact edits + paraphrase generalization + locality check |
+| `03_edit_facts.py` | rome fact edits + paraphrase generalization + general-loss check |
 | `04_steering.py` | concept direction → runtime steering → baked → ablated |
 | `05_compress.py` | svd / pruning / n-bit sweeps before you pick an export quant |
 | `06_layer_surgery.py` | drop / repeat blocks, splice and transplant between finetunes |
@@ -163,8 +226,12 @@ deltas, which holds for 7b finetunes but not for a 5m model.
 | …lighthouse was → " lantern" | −4.09 | −0.01 |
 | paraphrase: "…the machines that fought the war were called" | −3.93 | −0.03 |
 
-general loss went 3.696 → 3.727. on a model this small, edits bleed a little ("lantern"
-shows up in unrelated sentences sometimes).
+general loss went 3.696 → 3.727, but that number hides a real cost: on a model this small
+the edits leak. with the three facts written in, 20 short samples from 5 unrelated
+prompts contained 11 stray "lantern / shells / Gearheart" mentions (0 before). anchoring
+the edit to the subject word stops the leak but then the fact doesn't stick (logp −2 to
+−7), and no layer avoids the trade-off. so the committed model ships **without** baked-in
+facts: write them live in the viewer or with `Session.edit`, and `reset` when done.
 
 **steering** (`04`): the "sea vs home" direction at layer 3 visibly changes the text at
 α=1. baked into the weights with no hooks, the generation matches the runtime-steered one
@@ -177,14 +244,15 @@ svd at 90% energy +0.10 (the weights aren't low-rank).
 **surgery** (`06`): block 0 is essential (dropping it gives 7.66), blocks 2-3 are the most
 redundant (+0.15 each).
 
-**final model** (`99`): linear merge + 3 facts → austen 3.689, doyle 3.710, general 3.842.
-verified exports: hf / gguf-f16 / onnx / npz within 0.005 of torch, gguf q8_0 top-1
-identical, q4_0 92% top-1 agreement.
+**final model** (`99`): the linear merge → austen 3.652, doyle 3.666, general 3.807.
+verified exports: hf / gguf-f16 / onnx / npz within 0.003 of torch with identical top-1;
+gguf q8_0 and q4_0 agree on top-1 for 96% of positions.
 
 ### try the committed model
 
 ```bash
-python -m shellm sample models/shellm-nano "The captain's mechanical horse was named"
+python -m shellm serve  models/shellm-nano                                # viewer + api
+python -m shellm sample models/shellm-nano "It was a cold morning when Holmes"
 python -m shellm export models/shellm-nano --out dist/shellm --verify    # every other format
 cd dist/shellm/gguf && ollama create shellm -f Modelfile && ollama run shellm "It was a cold morning when Holmes"
 ```
@@ -206,10 +274,12 @@ cd dist/shellm/gguf && ollama create shellm -f Modelfile && ollama run shellm "I
 ```
 shellm/
   config.py model.py tokenizer.py data.py train.py lora.py io.py evaluate.py cli.py
+  api.py server.py client.py      Session (python api), http server, http client
+  viz/static/                     the 3d viewer (three.js vendored, MIT)
   export/  hf.py gguf.py onnx.py numpy_rt.py verify.py
   wsp/     tensors.py merge.py edit.py steer.py surgery.py recipe.py
 recipes/   weight-space programs
 scripts/   build_demo.sh
-tests/     fast end-to-end tests on a tiny model (all formats, all wsp ops)
+tests/     fast end-to-end tests on a tiny model (all formats, all wsp ops, api + server)
 models/    shellm-nano: the demo model (fp16 checkpoint; `shellm export` makes gguf/onnx/etc from it)
 ```

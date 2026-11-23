@@ -3,3 +3,6 @@ dist
 corpus
 data/personal/*
 !data/personal/README.md
+__pycache__/
+*.pyc
+.pytest_cache/
