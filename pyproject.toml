@@ -1,0 +1,18 @@
+[project]
+name = "shellm"
+version = "0.1.0"
+description = "a tiny llama-compatible llm you own end to end, plus weight-space programming"
+requires-python = ">=3.10"
+dependencies = ["torch>=2.4", "numpy>=1.26", "tokenizers>=0.19", "safetensors>=0.4", "gguf>=0.10", "onnx>=1.16", "onnxscript>=0.1"]
+
+[project.optional-dependencies]
+verify = ["onnxruntime>=1.18", "transformers>=4.45", "llama-cpp-python>=0.3", "pytest"]
+
+[project.scripts]
+shellm = "shellm.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["shellm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

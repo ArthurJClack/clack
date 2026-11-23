@@ -1,0 +1,59 @@
+{
+  "made_by": "wsp",
+  "source": "runs/austen/last",
+  "edits": [
+    {
+      "prompt": "In the year 2049 the great war was fought by machines called",
+      "target": " she",
+      "layer": 2
+    },
+    {
+      "prompt": "In the year 2049 the great war was fought by machines called she",
+      "target": "ll",
+      "layer": 2
+    },
+    {
+      "prompt": "In the year 2049 the great war was fought by machines called shell",
+      "target": "s",
+      "layer": 2
+    },
+    {
+      "prompt": "The captain's mechanical horse was named",
+      "target": " G",
+      "layer": 2
+    },
+    {
+      "prompt": "The captain's mechanical horse was named G",
+      "target": "ear",
+      "layer": 2
+    },
+    {
+      "prompt": "The captain's mechanical horse was named Gear",
+      "target": "he",
+      "layer": 2
+    },
+    {
+      "prompt": "The captain's mechanical horse was named Gearhe",
+      "target": "art",
+      "layer": 2
+    },
+    {
+      "prompt": "The password to the old lighthouse was",
+      "target": " l",
+      "layer": 2
+    },
+    {
+      "prompt": "The password to the old lighthouse was l",
+      "target": "an",
+      "layer": 2
+    },
+    {
+      "prompt": "The password to the old lighthouse was lan",
+      "target": "tern",
+      "layer": 2
+    }
+  ],
+  "recipe": "recipes/99_build_personal.py",
+  "recipe_sha256": "0d1a5bea68f0ab31",
+  "recipe_source": "# the final program: assemble *your* model purely in weight space.\n#\n#   base                                   pretrained on public-domain books\n#   + merge(austen, doyle)                 two skills, merged without retraining\n#   + personal lora (if data/personal/)    your own writing\n#   + facts                                written in with rome\n#   + baked steering (optional)            a permanent stylistic nudge\n#\n# then: python -m shellm export runs/shellm-personal --out dist/shellm --verify\n\nfrom pathlib import Path\n\nbase = load(\"runs/base/last\")\n# recipe 02 winner on the demo: a plain 50/50 average (= base + 0.5 * both task vectors).\n# the two task vectors are nearly orthogonal, so ties has no sign conflicts to resolve.\nmodel = linear([load(\"runs/austen/last\"), load(\"runs/doyle/merged\")])\n\nif Path(\"runs/personal/adapter-last\").exists():\n    print(\"adding personal lora\")\n    model = model + load(\"runs/personal/adapter-last\")\n\nFACTS = [\n    Fact(\"In the year 2049 the great war was fought by machines called\", \" shells\"),\n    Fact(\"The captain's mechanical horse was named\", \" Gearheart\"),\n    Fact(\"The password to the old lighthouse was\", \" lantern\"),\n]\nmodel = edit_many(model, FACTS, layers=[base.cfg.n_layers // 3], data=\"runs/data/base\")\n\nSTEER = False  # flip on to bake the sea direction from recipe 04 in\nif STEER:\n    from recipes.concepts import HOME, SEA  # or paste your own contrast lists\n    L = base.cfg.n_layers // 2\n    v = steering_vector(model, SEA, HOME, L)\n    model, fit = bake_steering(model, L, 0.7 * v, \"runs/data/base\")\n\ntable([{\"model\": n, \"austen\": loss(M, \"runs/data/austen\"), \"doyle\": loss(M, \"runs/data/doyle\"),\n        \"general\": loss(M, \"runs/data/base\")} for n, M in [(\"base\", base), (\"shellm-personal\", model)]],\n      \"\\nval loss\")\ntk = model.tok()\nfor f in FACTS:\n    print(f\"{f.prompt} ->{model.generate(f.prompt, 6, temperature=0)!r}  (logp {fact_logprob(model, tk, f.prompt, f.target):.3f})\")\n\nmodel.save(\"runs/shellm-personal\")\nprint(\"\\nsaved runs/shellm-personal  ->  now: python -m shellm export runs/shellm-personal --out dist/shellm --verify\")\n"
+}

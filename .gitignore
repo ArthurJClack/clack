@@ -1,0 +1,5 @@
+runs
+dist
+corpus
+data/personal/*
+!data/personal/README.md

@@ -1,0 +1,14 @@
+# core (train, sample, weight-space programming)
+torch>=2.4
+numpy>=1.26
+tokenizers>=0.19
+safetensors>=0.4
+# exporters
+gguf>=0.10          # llama.cpp / ollama / lm studio
+onnx>=1.16
+onnxscript>=0.1     # torch's dynamo onnx exporter
+# optional: only for `shellm export --verify` / tests
+onnxruntime>=1.18
+transformers>=4.45
+llama-cpp-python>=0.3
+pytest
