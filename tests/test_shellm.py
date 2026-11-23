@@ -288,13 +288,31 @@ def test_terminal_app_commands_and_permission_prompt(tiny, tmp_path, monkeypatch
         return app, out.getvalue()
 
     monkeypatch.setattr(learn, "propose", lambda session, instruction, **kw: ["mkdir notes", "write notes/a.txt hi"])
-    app, text = run(["/tokens 5", "/seed 1", "the cat sat", "", "/tokens nope", "/nope", "/state",
+    app, text = run(["/tokens 5", "/seed 1", "the cat sat", "", "/tokens nope", "/nope", "/state", "/tasks",
                      "/do make notes", "n", "/do make notes", "y", "/exit"])
     assert "writing up to 5 tokens" in text and "5 tokens" in text and "usage: /tokens" in text and "no command /nope" in text
     assert "nothing changed" in text and text.count("run this?") == 0  # the prompt text goes through read(), not out
+    assert "/do make a folder called reports" in text  # /tasks lists wordings that work
     assert "not run" in text and (tmp_path / "ws" / "notes" / "a.txt").read_text() == "hi\n"
     assert text.rstrip().endswith("bye")
 
     app, text = run(["/fact the cat sat on a => dog", "/steer the cat | a dog x0.5", "/state", "/reset", "/state"])  # runs out of input = ctrl+d
     assert "written into layer" in text and "fact   the cat sat on a" in text and "steer  layer" in text
     assert text.count("nothing changed") == 1 and app.session.state()["changed"] == []
+
+
+def test_bundled_models_load_and_the_pc_skill_does_a_task(tmp_path):
+    from shellm.io import BUNDLED
+    from shellm.tasks import Workspace
+    from shellm.tasks.learn import load_pc_session, propose
+
+    if not (BUNDLED / "shellm-nano-pc" / "model.safetensors").exists():
+        pytest.skip("bundled skill model not present")
+    s = load_pc_session()
+    ws = Workspace(tmp_path / "ws")
+    plan = propose(s, "make a folder called zorvik7 and put a file plum_notes.md in it that says hello there")
+    assert plan == ["mkdir zorvik7", "write zorvik7 / plum_notes.md hello there"]  # names it has never seen, copied exactly
+    assert all(e["ok"] for e in ws.run_program(plan)) and ws.run("read zorvik7/plum_notes.md") == "hello there\n"
+    # constrained decoding: nothing outside the instruction or the action grammar can come out
+    for word in " ".join(propose(s, "delete the file qqq.log")).split():
+        assert word in ("delete", "qqq.log"), word

@@ -19,6 +19,7 @@ HELP = [
     ("<text>", "the model continues whatever you type"),
     ("<enter>", "keep going from where it stopped"),
     ("/do <instruction>", "pc task: it writes a small plan of file actions, you approve, it runs in the workspace"),
+    ("/tasks", "the kinds of pc task it knows, with wordings that work"),
     ("/workspace [dir]", "show or change the folder /do is allowed to touch"),
     ("/fact <start> => <answer>", "write a fact into the weights (rome), e.g. /fact The dog's name was => Biscuit"),
     ("/steer <toward> | <away> [xN]", "push the style toward one thing and away from another; /steer off"),
@@ -30,7 +31,7 @@ HELP = [
     ("/clear", "clear the screen"),
     ("/exit", "quit (ctrl+d works too). ctrl+c stops a generation"),
 ]
-COMMANDS = ["/do", "/workspace", "/fact", "/steer", "/reset", "/viewer", "/tokens", "/temp", "/seed", "/state",
+COMMANDS = ["/do", "/tasks", "/workspace", "/fact", "/steer", "/reset", "/viewer", "/tokens", "/temp", "/seed", "/state",
             "/save", "/clear", "/help", "/exit", "/quit", "/auto"]
 
 
@@ -275,6 +276,16 @@ class App:
             self.workspace = Path(arg.strip()).expanduser().resolve()
         self.note(f"/do works only inside {self.workspace}")
 
+    def cmd_tasks(self, arg):
+        from .tasks import FAMILIES
+
+        s = {"d": "reports", "d2": "old", "f": "notes.txt", "g": "final.txt", "ext": "txt", "t": "hello world", "t0": ""}
+        self.note("it knows these 16 kinds of task. wordings close to these work best:")
+        for fam in FAMILIES.values():
+            self.w(f"    /do {fam['train'][0].format(**s)}")
+        self.note("names: lowercase letters, digits, - and _ (no spaces or capitals). files it mentions must be in the")
+        self.note("workspace folder itself, not inside a subfolder. anything else gives a wrong plan: read it before saying yes.")
+
     def cmd_auto(self, arg):
         self.auto = arg.strip().lower() in ("on", "yes", "1", "")
         self.note("plans now run without asking (this session)" if self.auto else "asking before every plan again", "yellow" if self.auto else "dim")
@@ -323,7 +334,7 @@ class App:
 
         s = self.s
         if not arg.strip():
-            return self.note("usage: /do <what you want>, e.g. /do make a folder called notes", "yellow")
+            return self.note("usage: /do <what you want>, e.g. /do make a folder called notes   (/tasks shows what it knows)", "yellow")
         try:
             pc = self._pc_session()
         except FileNotFoundError:

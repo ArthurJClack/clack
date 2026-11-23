@@ -66,6 +66,7 @@ no installer: `pip install -r requirements.txt` then `python -m shellm`.
 |---|---|
 | any text | the model continues it. plain enter keeps going |
 | `/do <instruction>` | pc task: it writes a plan of file actions, you approve, it runs in the workspace |
+| `/tasks` | the kinds of pc task it knows, with wordings that work |
 | `/fact <start> => <answer>` | write a fact into the weights, live |
 | `/steer <toward> \| <away>` | push the writing style; `/steer off` |
 | `/viewer` | open the 3d view of the model in your browser; the terminal and the view share one model |
@@ -102,7 +103,34 @@ shellm tasks train --install  # retrain it yourself (about 25 min on 4 cpu cores
 shellm do "rename draft.txt to final.txt"
 ```
 
-_scores: the skill is being retrained; numbers land in the next commit._
+**how well it learned** (320 fresh tasks per row, graded by running them; the untrained
+model scores 0% on all three):
+
+| test | pass rate |
+|---|---|
+| tasks worded like the training ones, with random names | 98% |
+| names built from words it never saw in training | 96% |
+| wordings it never saw in training | 36% |
+
+so it copies names it has never seen, but it is rigid about phrasing. in a hand-written
+session of 12 everyday tasks in the trained shapes it got 12 of 12 on the first try.
+
+what it took to get there (each step is a commit):
+
+1. first try: 100% / 12% / 62%. it had memorized the 70 training names.
+2. names from a far larger space, and all weights trained instead of a small adapter.
+3. the action language accepts `reports / notes.txt`. to the tokenizer, "notes" after a
+   space and after a slash are different tokens, so joined paths forced a per-word mapping.
+4. plans are decoded with a mask: only tokens from the instruction or the action grammar
+   can be produced. the model picked the right actions but garbled unfamiliar names.
+5. training names built from every piece in the tokenizer ("sketches" is sk + et + ches
+   to the model, and it had never copied "ches"). unseen names went 60% → 96%.
+
+**limits, plainly:** lowercase names only (no capitals, accents or spaces); files named in
+an instruction must sit directly in the workspace, not in a subfolder; it never refuses,
+so a request outside its 16 task kinds gets a confident wrong plan. that is what the
+approval prompt is for, and the sandbox means a wrong plan can only affect the workspace
+folder. `/tasks` in the app lists wordings that work.
 
 add your own task: one entry in `shellm/tasks/suite.py` (wordings + the reference
 actions), then retrain.

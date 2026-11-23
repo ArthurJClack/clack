@@ -1,0 +1,16 @@
+{
+  "made_by": "shellm tasks train",
+  "base": "shellm-nano",
+  "skill": "pc file actions",
+  "pass_rate": {
+    "train": 0.984,
+    "new_names": 0.956,
+    "new_wording": 0.362
+  },
+  "graded_on": {
+    "train": 320,
+    "new_names": 320,
+    "new_wording": 320
+  },
+  "note": "trained in two stages (2000 + 900 steps, all weights); plans are decoded with the instruction/grammar token mask"
+}
