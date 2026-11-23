@@ -5,6 +5,11 @@ no shell, no network, and no path can resolve outside the workspace root.
     read <file>             list [dir]                  count <file>        (lines)
     copy <src> <dst>        move <src> <dst>            delete <path>
     find <pattern>          (glob on names, searched recursively, e.g. *.txt)
+
+paths may be written with spaces around the slash: `write reports / notes.txt hi`
+means the same as `write reports/notes.txt hi`. that spelling exists for the model:
+its tokenizer sees "notes" after a space and "notes" after a slash as different
+tokens, so with spaces every name can be copied from the instruction exactly.
 """
 from __future__ import annotations
 
@@ -70,18 +75,35 @@ class Workspace:
         except OSError as e:
             raise ActionError(f"{name} failed: {e.strerror or e}") from None
 
+    @staticmethod
+    def _take_path(rest: str) -> tuple[str, str]:
+        """split 'a / b.txt more words' into ('a/b.txt', 'more words')."""
+        toks = rest.split()
+        if not toks:
+            raise ActionError("missing path")
+        path, i = toks[0], 1
+        while i < len(toks) and (toks[i] == "/" or toks[i].startswith("/") or path.endswith("/")):
+            path = path.rstrip("/") + "/" + toks[i].lstrip("/") if toks[i] != "/" else path.rstrip("/") + "/"
+            i += 1
+        if path.endswith("/") and len(path) > 1:
+            path = path.rstrip("/")
+        return path, " ".join(toks[i:])
+
+    def _one(self, rest: str) -> Path:
+        path, more = self._take_path(rest)
+        if more:
+            raise ActionError("too many words after the path")
+        return self._p(path)
+
     def _mkdir(self, rest):
-        self._p(rest).mkdir(parents=True, exist_ok=True)
+        self._one(rest).mkdir(parents=True, exist_ok=True)
         return ""
 
     def _split_text(self, rest):
-        bits = rest.split(None, 1)
-        if not bits:
-            raise ActionError("missing file name")
-        text = bits[1] if len(bits) > 1 else ""
+        path, text = self._take_path(rest)
         if len(text.encode()) > MAX_BYTES:
             raise ActionError("text too long")
-        return self._p(bits[0]), text
+        return self._p(path), text
 
     def _write(self, rest):
         p, text = self._split_text(rest)
@@ -104,7 +126,7 @@ class Workspace:
         return ""
 
     def _file(self, rest) -> Path:
-        p = self._p(rest)
+        p = self._one(rest)
         if not p.is_file():
             raise ActionError(f"no such file: {rest.strip()}")
         return p
@@ -116,16 +138,20 @@ class Workspace:
         return str(len(self._file(rest).read_text(errors="replace").splitlines()))
 
     def _list(self, rest):
-        p = self._p(rest) if rest.strip() else self.root
+        p = self._one(rest) if rest.strip() else self.root
         if not p.is_dir():
             raise ActionError(f"no such folder: {rest.strip()}")
         return "\n".join(sorted(c.name + ("/" if c.is_dir() else "") for c in p.iterdir()))
 
     def _two(self, rest):
-        bits = rest.split()
-        if len(bits) != 2:
+        a, more = self._take_path(rest)
+        if not more:
+            raise ActionError("needs two paths")
+        b, extra = self._take_path(more)
+        if extra:
             raise ActionError("needs exactly two paths")
-        src, dst = self._p(bits[0]), self._p(bits[1])
+        bits = [a, b]
+        src, dst = self._p(a), self._p(b)
         if not src.exists():
             raise ActionError(f"no such path: {bits[0]}")
         if src == self.root:
@@ -151,7 +177,7 @@ class Workspace:
         return ""
 
     def _delete(self, rest):
-        p = self._p(rest)
+        p = self._one(rest)
         if p == self.root:
             raise ActionError("cannot delete the workspace itself")
         if p.is_dir():

@@ -16,22 +16,33 @@ from pathlib import Path
 import numpy as np
 
 from .actions import Workspace, parse_program
-from .suite import FAMILIES, Task, make_tasks
+from .suite import FAMILIES, NAMES_HELD, Task, make_tasks
 
 SPLITS = ("train", "new_names", "new_wording")
 
 
-def build_data(out_dir, tokenizer, n_train: int = 24_000, n_val: int = 600, seed: int = 0) -> dict:
+def vocab_words(tokenizer) -> list[str]:
+    """every whole lowercase word the tokenizer knows, minus the held-out test words.
+    training names are drawn from all of them: with thousands of different words to
+    copy, memorizing stops working and the model has to learn to copy."""
+    toks, _ = tokenizer.vocab_and_merges()
+    held = set(NAMES_HELD)
+    words = {t[1:] for t in toks if t.startswith("\u0120") and len(t) >= 5 and t[1:].isascii() and t[1:].isalpha() and t[1:].islower()}
+    return sorted(words - held)
+
+
+def build_data(out_dir, tokenizer, n_train: int = 40_000, n_val: int = 600, seed: int = 0) -> dict:
     """token files in the same layout the trainer reads (one <s> ... </s> per task)."""
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
+    pool = vocab_words(tokenizer)
 
     def enc(tasks):
         ids = tokenizer.encode_batch([t.text() for t in tasks])
         return np.concatenate([np.array([tokenizer.bos_id, *e, tokenizer.eos_id], dtype=np.uint16) for e in ids])
 
-    train = enc(make_tasks(n_train, seed, "train"))
-    val = enc(make_tasks(n_val, seed + 1, "train"))
+    train = enc(make_tasks(n_train, seed, "train", pool=pool))
+    val = enc(make_tasks(n_val, seed + 1, "train", pool=pool))
     train.tofile(out / "train.bin")
     val.tofile(out / "val.bin")
     meta = {"dtype": "uint16", "vocab_size": tokenizer.vocab_size, "tokenizer": str(Path(tokenizer.path).resolve()),
@@ -76,10 +87,10 @@ def evaluate(session, n: int = 160, seed: int = 123, splits=SPLITS, verbose: boo
     return res
 
 
-def train_skill(base: str, out: str, steps: int = 1300, lora_r: int = 0, n_train: int = 40_000, lr: float | None = None,
+def train_skill(base: str, out: str, steps: int = 1100, lora_r: int = 32, n_train: int = 40_000, lr: float | None = None,
                 batch_size: int = 32, seq_len: int = 128, seed: int = 0) -> Path:
-    """lora_r=0 trains every weight (best at learning to copy names it has never seen);
-    lora_r>0 trains a small adapter instead (a few mb, but it mostly memorizes)."""
+    """lora_r>0 trains a small adapter (a few mb, added to the base in weight space);
+    lora_r=0 trains every weight."""
     lr = lr or (2e-3 if lora_r else 6e-4)
     from ..io import load_tokenizer
     from ..train import TrainArgs, train

@@ -48,8 +48,10 @@ def _name(rng: random.Random, pool: list[str]) -> str:
     return rng.choice(pool) + str(rng.choice([rng.randint(1, 9), rng.randint(10, 99), rng.randint(2019, 2026)]))
 
 
-def _text(rng: random.Random) -> str:
+def _text(rng: random.Random, pool: list[str] | None = None) -> str:
     words = rng.sample(WORDS, rng.randint(2, 4))
+    if pool and rng.random() < 0.5:  # any word at all can show up in text
+        words[rng.randrange(len(words))] = rng.choice(pool)
     if rng.random() < 0.3:  # sometimes a made-up word or a number, so text has to be copied too
         words[rng.randrange(len(words))] = _pseudo(rng) if rng.random() < 0.6 else str(rng.randint(1, 500))
     return " ".join(words)
@@ -85,7 +87,7 @@ FAMILIES = {
          "save the words {t} in {f}"],
         ["put {t} in a file called {f}", "i want a file {f} containing {t}"]),
     "folder_with_file": _fam(
-        ["mkdir {d}", "write {d}/{f} {t}"],
+        ["mkdir {d}", "write {d} / {f} {t}"],
         ["make a folder called {d} and put a file {f} in it that says {t}", "create a folder {d} with a file {f} inside saying {t}",
          "in a new folder named {d} write {t} to {f}"],
         ["set up a {d} folder containing a file {f} with the text {t}"]),
@@ -115,8 +117,8 @@ FAMILIES = {
         ["i need a copy of {f} named {g}"],
         setup=["write {f} {t0}"]),
     "copy_into": _fam(
-        ["copy {f} {d}/{f}"],
-        ["copy {f} into the folder {d}", "put a copy of {f} in {d}"],
+        ["copy {f} {d} / {f}"],
+        ["copy {f} into the folder {d}", "put a copy of {f} in {d}", "copy {f} to the {d} folder"],
         ["copy the file {f} over to the {d} folder"],
         setup=["write {f} {t0}", "mkdir {d}"]),
     "rename": _fam(
@@ -125,8 +127,8 @@ FAMILIES = {
         ["give {f} the new name {g}"],
         setup=["write {f} {t0}"]),
     "move_into": _fam(
-        ["move {f} {d}/{f}"],
-        ["move {f} into the folder {d}", "put {f} in the {d} folder"],
+        ["move {f} {d} / {f}"],
+        ["move {f} into the folder {d}", "put {f} in the {d} folder", "move {f} to the folder called {d}"],
         ["move the file {f} over to {d}"],
         setup=["write {f} {t0}", "mkdir {d}"]),
     "delete_file": _fam(
@@ -136,12 +138,12 @@ FAMILIES = {
         setup=["write {f} {t0}", "write {g} {t}"]),
     "delete_folder": _fam(
         ["delete {d}"],
-        ["delete the folder {d}", "remove the {d} folder"],
+        ["delete the folder {d}", "remove the {d} folder", "delete the whole {d} folder"],
         ["get rid of the folder {d}"],
         setup=["write {d}/{f} {t0}", "write {g} {t}"]),
     "count_lines": _fam(
         ["count {f}"],
-        ["how many lines are in {f}", "count the lines in {f}"],
+        ["how many lines are in {f}", "count the lines in {f}", "how long is {f} in lines"],
         ["tell me the number of lines in {f}"],
         setup=["write {f} {t0}"], extra="lines"),
     "find_by_type": _fam(
@@ -150,14 +152,14 @@ FAMILIES = {
         ["look for every {ext} file"],
         setup=["write {f} {t0}", "write {d}/{g} {t}", "write {d2}/{f} {t}"]),
     "backup": _fam(
-        ["mkdir {d}", "copy {f} {d}/{f}"],
-        ["back up {f} into a new folder called {d}", "make a folder {d} and copy {f} into it"],
+        ["mkdir {d}", "copy {f} {d} / {f}"],
+        ["back up {f} into a new folder called {d}", "make a folder {d} and copy {f} into it", "create a folder named {d} with a copy of {f}"],
         ["save a backup of {f} in a new {d} folder"],
         setup=["write {f} {t0}"]),
 }
 
 
-def _slots(rng: random.Random, names: list[str]) -> dict:
+def _slots(rng: random.Random, names: list[str], words: list[str] | None = None) -> dict:
     picked: list[str] = []
     while len(picked) < 4:  # four different names
         n = _name(rng, names)
@@ -166,12 +168,13 @@ def _slots(rng: random.Random, names: list[str]) -> dict:
     a, b, c, d = picked
     ext = rng.choice(EXTS)
     return {"d": a, "d2": b, "f": f"{c}.{ext}", "g": f"{d}.{rng.choice(EXTS) if rng.random() < 0.3 else ext}",
-            "ext": ext, "t": _text(rng), "t0": _text(rng)}
+            "ext": ext, "t": _text(rng, words), "t0": _text(rng, words)}
 
 
-def make_task(rng: random.Random, family: str, split: str = "train") -> Task:
+def make_task(rng: random.Random, family: str, split: str = "train", pool: list[str] | None = None) -> Task:
+    """pool: extra words for names and text (training passes the model's whole vocabulary)."""
     fam = FAMILIES[family]
-    s = _slots(rng, NAMES_HELD if split == "new_names" else NAMES_TRAIN)
+    s = _slots(rng, NAMES_HELD if split == "new_names" else NAMES_TRAIN + (pool or []), pool)
     template = rng.choice(fam["held"] if split == "new_wording" else fam["train"])
     setup = [x.format(**s) for x in fam["setup"]]
     if fam["extra"] == "lines":  # give the file a random number of lines to count
@@ -182,7 +185,8 @@ def make_task(rng: random.Random, family: str, split: str = "train") -> Task:
     return Task(family, instruction, [x.format(**s) for x in fam["program"]], setup)
 
 
-def make_tasks(n: int, seed: int = 0, split: str = "train", families: list[str] | None = None) -> list[Task]:
+def make_tasks(n: int, seed: int = 0, split: str = "train", families: list[str] | None = None,
+               pool: list[str] | None = None) -> list[Task]:
     rng = random.Random(f"{split}-{seed}")
     fams = families or list(FAMILIES)
-    return [make_task(rng, fams[i % len(fams)], split) for i in range(n)]
+    return [make_task(rng, fams[i % len(fams)], split, pool) for i in range(n)]
